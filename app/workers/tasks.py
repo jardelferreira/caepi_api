@@ -99,7 +99,15 @@ def _save_certificate(scraped) -> int:
         return certificate.id
 
 
-@celery_app.task(name="app.workers.tasks.refresh_source")
+@celery_app.task(
+    name="app.workers.tasks.refresh_source",
+    autoretry_for=(Exception,),
+    dont_autoretry_for=(ValueError,),
+    retry_backoff=True,
+    retry_backoff_max=300,
+    retry_jitter=True,
+    max_retries=3,
+)
 def refresh_source(ca_number: str | None = None) -> dict[str, Any]:
     """Consulta um CA específico no portal oficial; sem número, não faz varredura ampla."""
     if not ca_number or not str(ca_number).strip():
@@ -135,7 +143,15 @@ def _extract_pdf_text(content: bytes) -> str:
 
 
 
-@celery_app.task(name="app.workers.tasks.fetch_certificate_pdf")
+@celery_app.task(
+    name="app.workers.tasks.fetch_certificate_pdf",
+    autoretry_for=(Exception,),
+    dont_autoretry_for=(ValueError,),
+    retry_backoff=True,
+    retry_backoff_max=300,
+    retry_jitter=True,
+    max_retries=3,
+)
 def fetch_certificate_pdf(ca_number: str) -> dict[str, Any]:
     normalized = re.sub(r"\D", "", str(ca_number or ""))
     if not normalized or len(normalized) > 32:

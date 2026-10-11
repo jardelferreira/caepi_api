@@ -1,8 +1,9 @@
-"""Testes de resiliência sem chamadas reais ao portal nem ao armazenamento."""
+"""Testes de resiliência e configuração de retentativas Celery."""
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+from celery.exceptions import Retry
 from sqlalchemy import func, select
 
 import app.workers.tasks as tasks
@@ -27,30 +28,56 @@ class StorageUnavailable:
         raise AssertionError("nenhum objeto anterior esperado")
 
 
-def test_refresh_portal_failure_does_not_create_or_change_records(test_environment, monkeypatch):
-    session_factory, _, _ = test_environment
-    monkeypatch.setattr(
-        "app.scrapers.caepi_portal.CaepiPortalScraper",
-        lambda: PortalUnavailable(),
-    )
+def _assert_retry_policy(task):
+    assert task.max_retries == 3
+    assert task.autoretry_for == (Exception,)
+    assert task.dont_autoretry_for == (ValueError,)
+    assert task.retry_backoff is True
+    assert task.retry_backoff_max == 300
+    assert task.retry_jitter is True
 
-    with pytest.raises(TimeoutError, match="falha simulada"):
+
+def test_tasks_have_bounded_retry_policy():
+    _assert_retry_policy(tasks.refresh_source)
+    _assert_retry_policy(tasks.fetch_certificate_pdf)
+
+
+def test_refresh_portal_failure_requests_retry_without_creating_records(test_environment, monkeypatch):
+    session_factory, _, _ = test_environment
+    monkeypatch.setattr("app.scrapers.caepi_portal.CaepiPortalScraper", lambda: PortalUnavailable())
+
+    retry_calls = []
+
+    def request_retry(*args, **kwargs):
+        retry_calls.append(kwargs)
+        raise Retry("retry requested")
+
+    monkeypatch.setattr(tasks.refresh_source, "retry", request_retry)
+    with pytest.raises(Retry, match="retry requested"):
         tasks.refresh_source.run("42049")
+    assert len(retry_calls) == 1
+    assert isinstance(retry_calls[0].get("exc"), TimeoutError)
 
     with session_factory() as db:
         assert db.scalar(select(func.count()).select_from(Certificate)) == 0
         assert db.scalar(select(func.count()).select_from(CertificateDocument)) == 0
 
 
-def test_pdf_portal_failure_does_not_create_document(test_environment, monkeypatch):
+def test_pdf_portal_failure_requests_retry_without_creating_records(test_environment, monkeypatch):
     session_factory, store, _ = test_environment
-    monkeypatch.setattr(
-        "app.scrapers.caepi_portal.CaepiPortalScraper",
-        lambda: PortalUnavailable(),
-    )
+    monkeypatch.setattr("app.scrapers.caepi_portal.CaepiPortalScraper", lambda: PortalUnavailable())
 
-    with pytest.raises(TimeoutError, match="falha simulada"):
+    retry_calls = []
+
+    def request_retry(*args, **kwargs):
+        retry_calls.append(kwargs)
+        raise Retry("retry requested")
+
+    monkeypatch.setattr(tasks.fetch_certificate_pdf, "retry", request_retry)
+    with pytest.raises(Retry, match="retry requested"):
         tasks.fetch_certificate_pdf.run("42049")
+    assert len(retry_calls) == 1
+    assert isinstance(retry_calls[0].get("exc"), TimeoutError)
 
     with session_factory() as db:
         assert db.scalar(select(func.count()).select_from(Certificate)) == 0
@@ -58,9 +85,8 @@ def test_pdf_portal_failure_does_not_create_document(test_environment, monkeypat
     assert store.objects == {}
 
 
-def test_storage_failure_does_not_mark_pdf_as_downloaded(test_environment, monkeypatch):
+def test_storage_failure_requests_retry_and_does_not_mark_pdf_downloaded(test_environment, monkeypatch):
     session_factory, _, _ = test_environment
-
     scraped = SimpleNamespace(
         ca_number="42049",
         fields={"situacao": "VÁLIDO", "equipamento": "Respirador de teste"},
@@ -83,11 +109,18 @@ def test_storage_failure_does_not_mark_pdf_as_downloaded(test_environment, monke
     monkeypatch.setattr("app.scrapers.caepi_portal.CaepiPortalScraper", lambda: Scraper())
     monkeypatch.setattr(tasks, "get_object_store", lambda: StorageUnavailable())
 
-    with pytest.raises(ConnectionError, match="falha simulada"):
+    retry_calls = []
+
+    def request_retry(*args, **kwargs):
+        retry_calls.append(kwargs)
+        raise Retry("retry requested")
+
+    monkeypatch.setattr(tasks.fetch_certificate_pdf, "retry", request_retry)
+    with pytest.raises(Retry, match="retry requested"):
         tasks.fetch_certificate_pdf.run("42049")
+    assert len(retry_calls) == 1
+    assert isinstance(retry_calls[0].get("exc"), ConnectionError)
 
     with session_factory() as db:
-        # A consulta do certificado foi persistida, mas o PDF não pode constar
-        # como baixado se o armazenamento falhou antes do commit do documento.
         assert db.scalar(select(func.count()).select_from(Certificate)) == 1
         assert db.scalar(select(func.count()).select_from(CertificateDocument)) == 0
