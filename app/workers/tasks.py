@@ -7,6 +7,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
+from pypdf import PdfReader
 
 from app.core.database import SessionLocal
 from app.models.ca import Certificate
@@ -119,6 +120,21 @@ def refresh_source(ca_number: str | None = None) -> dict[str, Any]:
     }
 
 
+
+def _extract_pdf_text(content: bytes) -> str:
+    """Extrai texto do PDF e normaliza espaços para comparar versões documentais."""
+    from io import BytesIO
+
+    try:
+        reader = PdfReader(BytesIO(content))
+        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    except Exception:
+        return ""
+    return " ".join(text.split())
+
+
+
+
 @celery_app.task(name="app.workers.tasks.fetch_certificate_pdf")
 def fetch_certificate_pdf(ca_number: str) -> dict[str, Any]:
     normalized = re.sub(r"\D", "", str(ca_number or ""))
@@ -135,8 +151,83 @@ def fetch_certificate_pdf(ca_number: str) -> dict[str, Any]:
     certificate_id = _save_certificate(scraped)
     pdf = scraper.fetch_pdf(normalized)
     sha256 = hashlib.sha256(pdf.content).hexdigest()
-    object_key = f"certificates/{normalized}/certificate-{sha256[:16]}.pdf"
     store = get_object_store()
+    checked_at = datetime.now(timezone.utc)
+
+    # Primeiro caminho: hash idêntico já registrado. Evita regravar o mesmo objeto.
+    with SessionLocal() as db:
+        exact_match = db.scalar(
+            select(CertificateDocument).where(
+                CertificateDocument.certificate_id == certificate_id,
+                CertificateDocument.document_type == "certificate_pdf",
+                CertificateDocument.sha256 == sha256,
+            )
+        )
+        if exact_match is not None:
+            exact_match.status = "downloaded"
+            exact_match.source_url = pdf.source_url
+            exact_match.last_checked_at = checked_at
+            existing_key = exact_match.object_key
+            existing_size = exact_match.size_bytes or len(pdf.content)
+            db.commit()
+            return {
+                "status": "unchanged",
+                "ca_number": normalized,
+                "certificate_id": certificate_id,
+                "document_key": existing_key,
+                "sha256": sha256,
+                "size_bytes": existing_size,
+                "deduplicated_by": "sha256",
+            }
+
+        # Recupera referências dos documentos anteriores. O acesso ao object store
+        # é feito fora da sessão para não manter uma transação aberta durante I/O.
+        existing_documents = db.scalars(
+            select(CertificateDocument).where(
+                CertificateDocument.certificate_id == certificate_id,
+                CertificateDocument.document_type == "certificate_pdf",
+                CertificateDocument.status == "downloaded",
+                CertificateDocument.object_key.is_not(None),
+            ).order_by(CertificateDocument.id.desc())
+        ).all()
+        previous = [
+            {
+                "id": document.id,
+                "object_key": document.object_key,
+                "sha256": document.sha256,
+                "size_bytes": document.size_bytes,
+            }
+            for document in existing_documents
+        ]
+
+    new_text = _extract_pdf_text(pdf.content)
+    if new_text:
+        for document in previous:
+            try:
+                old_content = store.get_bytes(document["object_key"])
+                old_text = _extract_pdf_text(old_content)
+            except Exception:
+                # Um objeto antigo indisponível não deve impedir um novo download.
+                continue
+            if old_text and old_text == new_text:
+                with SessionLocal() as db:
+                    existing = db.get(CertificateDocument, document["id"])
+                    if existing is not None:
+                        existing.status = "downloaded"
+                        existing.source_url = pdf.source_url
+                        existing.last_checked_at = checked_at
+                        db.commit()
+                return {
+                    "status": "unchanged",
+                    "ca_number": normalized,
+                    "certificate_id": certificate_id,
+                    "document_key": document["object_key"],
+                    "sha256": document["sha256"],
+                    "size_bytes": document["size_bytes"],
+                    "deduplicated_by": "extracted_text",
+                }
+
+    object_key = f"certificates/{normalized}/certificate-{sha256[:16]}.pdf"
     store.put_bytes(
         key=object_key,
         content=pdf.content,
@@ -164,7 +255,7 @@ def fetch_certificate_pdf(ca_number: str) -> dict[str, Any]:
         document.content_type = pdf.content_type
         document.size_bytes = len(pdf.content)
         document.source_url = pdf.source_url
-        document.last_checked_at = datetime.now(timezone.utc)
+        document.last_checked_at = checked_at
         db.commit()
 
     return {
@@ -174,4 +265,5 @@ def fetch_certificate_pdf(ca_number: str) -> dict[str, Any]:
         "document_key": object_key,
         "sha256": sha256,
         "size_bytes": len(pdf.content),
+        "deduplicated_by": None,
     }
