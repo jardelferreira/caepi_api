@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "caepi-api"
+version = "0.1.0"
+description = "API para consulta e enriquecimento de Certificados de Aprovação de EPIs"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115,<1.0",
+  "uvicorn[standard]>=0.30,<1.0",
+  "pydantic-settings>=2.5,<3.0",
+  "SQLAlchemy>=2.0,<3.0",
+  "alembic>=1.14,<2.0",
+  "psycopg[binary]>=3.2,<4.0",
+  "celery[redis]>=5.4,<6.0",
+  "httpx>=0.27,<1.0",
+  "boto3>=1.35,<2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<9.0", "ruff>=0.7,<1.0", "httpx>=0.27,<1.0"]
+scraping = ["selenium>=4.25,<5.0"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
