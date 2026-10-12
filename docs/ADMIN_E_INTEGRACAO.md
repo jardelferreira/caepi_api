@@ -1,15 +1,24 @@
 # Administração e integração da CAEPI API
 
-## 1. Configuração inicial do administrador
+Este documento é o ponto de entrada para as instruções operacionais mostradas também na tela de login. A documentação completa está separada por assunto:
 
-A área administrativa fica desabilitada até que as três variáveis abaixo existam. Gere valores fortes no Ubuntu:
+- [Instalação e primeiros testes](INSTALACAO_E_PRIMEIROS_TESTES.md)
+- [API e integração com sistemas externos](API_E_INTEGRACAO.md)
+- [Administração e bases oficiais](ADMINISTRACAO_E_BASES.md)
+- [Campanhas e processamento](CAMPANHAS_E_PROCESSAMENTO.md)
+- [Segurança e backups](SEGURANCA_E_BACKUPS.md)
+- [Diagnóstico](DIAGNOSTICO.md)
+
+## Configurar o login administrativo
+
+Gere valores localmente no Ubuntu:
 
 ```bash
-openssl rand -hex 16   # senha aleatória para o ADMIN_PASSWORD
-openssl rand -hex 32   # segredo para o ADMIN_SESSION_SECRET
+openssl rand -hex 16
+openssl rand -hex 32
 ```
 
-Adicione ao `.env` já existente, sem substituir outras variáveis:
+Acrescente ao `.env` existente, sem sobrescrever o restante da configuração:
 
 ```dotenv
 ADMIN_USERNAME=admin
@@ -18,9 +27,9 @@ ADMIN_SESSION_SECRET=COLE_O_SEGREDO_GERADO
 ADMIN_COOKIE_SECURE=false
 ```
 
-`ADMIN_COOKIE_SECURE=false` é apropriado somente para desenvolvimento local em `http://localhost:8080`. Em produção, atrás de HTTPS, defina `ADMIN_COOKIE_SECURE=true`. Não comite `.env`, não compartilhe os valores e não use senhas de exemplo.
+O segredo de sessão precisa ter no mínimo 32 caracteres. `ADMIN_COOKIE_SECURE=false` é apenas para desenvolvimento em `http://localhost:8080`; em produção HTTPS, use `true`. Nunca publique o `.env` nem compartilhe credenciais.
 
-Depois de salvar o `.env`:
+Depois de salvar:
 
 ```bash
 docker compose config -q
@@ -29,137 +38,28 @@ docker compose restart nginx
 docker compose ps
 ```
 
-No primeiro arranque, o serviço `api` executa `alembic upgrade head` e cria a tabela aditiva `api_keys`. As tabelas `certificates`, `certificate_documents` e `certificate_observations` não são recriadas nem apagadas. Faça backup normal do banco antes de aplicar atualizações de esquema em ambientes importantes.
+Não inclua um serviço no comando se ele não existir no seu `docker-compose.yml`. Não execute `docker compose down -v` para corrigir problemas comuns, pois isso remove volumes persistentes.
 
-## 2. Login e módulos de administração
+## Criar uma chave de integração
 
-- `/login`: login de administrador.
-- `/admin`: página inicial e navegação por módulos.
-- `/dashboard`: monitor de tarefas.
-- `/certificates`: catálogo, integridade e campanhas.
-- `/admin/consult`: consulta individual pela base local, sem iniciar scraping.
-- `/admin/api-keys`: gerar, listar e revogar chaves de integração.
-- `/admin/sources`: inspecionar e importar bases oficiais.
-- `/docs`: documentação OpenAPI.
+1. Entre em `http://localhost:8080/login`.
+2. Abra `/admin/api-keys`.
+3. Crie uma chave nomeada e escolha os escopos necessários.
+4. Copie o segredo integral imediatamente para o gerenciador de segredos do sistema consumidor.
 
-Sessão administrativa usa cookie assinado `HttpOnly`, `SameSite=Strict`, expiração de 8 horas e token CSRF para operações mutáveis. Login tem limitação de tentativas baseada no Redis. O logout revoga a sessão do navegador.
+- `certificates:read`: consulta de certificado existente na base local.
+- `documents:read`: acesso ao PDF já armazenado.
 
-## 3. Gerar uma chave para um sistema externo
+O segredo completo só aparece uma vez; a base guarda um hash SHA-256. Chaves podem expirar ou ser revogadas independentemente da senha do administrador.
 
-Entre em `/admin/api-keys`, dê um nome à integração, selecione os escopos e o prazo. A chave em claro é apresentada somente uma vez. Copie-a para o gestor de segredos do sistema consumidor; nunca a coloque no código-fonte, repositório, front-end público ou logs.
-
-Escopos disponíveis:
-
-- `certificates:read`: consulta o registro consolidado de um CA.
-- `documents:read`: baixa o PDF já armazenado no Object Storage.
-
-Os hashes SHA-256 são armazenados no PostgreSQL. É possível revogar uma chave sem alterar a senha administrativa ou outras integrações.
-
-## 4. Consultar um CA por HTTP
-
-Endpoint read-only:
-
-```http
-GET /api/v1/certificates/{ca_number}
-Authorization: Bearer caepi_live_SUA_CHAVE
-Accept: application/json
-```
-
-Exemplo local:
+## Consultar um CA
 
 ```bash
-export CAEPI_API_KEY='cole-a-chave-aqui'
+export CAEPI_API_KEY='CHAVE_COPIADA_DO_ADMIN'
 curl -sS \
   -H "Authorization: Bearer $CAEPI_API_KEY" \
   -H 'Accept: application/json' \
   http://localhost:8080/api/v1/certificates/15272
 ```
 
-A consulta lê apenas os dados já existentes no PostgreSQL. Não chama o portal, não inicia uma tarefa Celery e não atualiza o registro. Se o CA não estiver cadastrado, a resposta é `404`; a integração deve decidir se solicita atualização em uma interface administrativa ou se aguarda uma atualização autorizada.
-
-Resposta simplificada:
-
-```json
-{
-  "certificate": {
-    "ca_number": "15272",
-    "status": "VÁLIDO",
-    "valid_until": "2030-01-31",
-    "manufacturer": "Fabricante exemplo",
-    "equipment_name": "Equipamento de proteção",
-    "brand": "Marca exemplo",
-    "last_source": "caepi_portal",
-    "last_source_update": "2026-10-12T10:30:00+00:00",
-    "data": {},
-    "sources": {},
-    "documents": {
-      "certificate_pdf_available": true,
-      "certificate_pdf_sha256": "...",
-      "certificate_pdf_size_bytes": 156572
-    }
-  },
-  "source": "local_database",
-  "scraping_started": false
-}
-```
-
-Os valores acima são apenas um exemplo de formato, não afirmações sobre o CA 15272 atual. Campos podem ser `null`, e os objetos `data`/`sources` refletem aquilo que foi efetivamente coletado.
-
-## 5. Exemplo em Python
-
-```python
-import os
-import requests
-
-base_url = os.getenv("CAEPI_API_URL", "http://localhost:8080")
-api_key = os.environ["CAEPI_API_KEY"]
-ca_number = "15272"
-
-response = requests.get(
-    f"{base_url}/api/v1/certificates/{ca_number}",
-    headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
-    timeout=15,
-)
-if response.status_code == 404:
-    print("CA ainda não cadastrado na base local")
-elif response.status_code == 401:
-    raise RuntimeError("Chave ausente, inválida, expirada ou revogada")
-else:
-    response.raise_for_status()
-    certificate = response.json()["certificate"]
-    print(certificate["ca_number"], certificate["status"], certificate["valid_until"])
-```
-
-## 6. Consultar o PDF armazenado
-
-Requer uma chave com escopo `documents:read`:
-
-```bash
-curl -fS -L \
-  -H "Authorization: Bearer $CAEPI_API_KEY" \
-  http://localhost:8080/api/v1/certificates/15272/pdf \
-  -o CA-15272.pdf
-```
-
-O endpoint apenas entrega um PDF existente no armazenamento. Se o documento não estiver disponível, retorna `404`; não inicia download nem scraping.
-
-## 7. Códigos de resposta
-
-- `200`: consulta ou download realizado.
-- `201`: chave de API criada (o segredo completo é devolvido nesta resposta uma única vez).
-- `401`: falta chave/sessão ou a chave expirou, foi revogada ou é inválida.
-- `403`: escopo insuficiente, token CSRF inválido ou origem recusada.
-- `404`: CA/documento/chave não encontrado.
-- `422`: número de CA ou parâmetros inválidos.
-- `429`: limite de tentativas de login excedido.
-- `503`: configuração administrativa ausente ou dependência necessária indisponível.
-- `502`: falha no acesso ao armazenamento de PDF.
-
-## 8. Proteções e limitações
-
-- A chave externa tem somente os escopos escolhidos e não pode iniciar scraping, campanhas ou importações.
-- As rotas de operações administrativas exigem sessão e token CSRF.
-- A consulta externa é read-only; nenhuma consulta por API altera dados.
-- O PDF pode conter dados oficiais protegidos; entregue `documents:read` apenas a sistemas que realmente necessitem dele.
-- Não exponha Redis/PostgreSQL/SeaweedFS à Internet. Em produção, use HTTPS, segredos fortes e rotacionáveis e backups fora do host.
-- Não contorne desafios do Cloudflare do portal CAEPI. O endpoint de consulta local continua útil com os dados já carregados enquanto o portal não estiver acessível.
+A consulta usa a base PostgreSQL local e não inicia scraping. Leia [API e integração](API_E_INTEGRACAO.md) para estrutura de resposta, exemplos Python e códigos HTTP.
