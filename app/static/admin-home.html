@@ -1,7 +1,15 @@
 <!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Administração · CAEPI API</title><style>
 :root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f3f6fb}*{box-sizing:border-box}body{margin:0}header{background:white;border-bottom:1px solid #dfe5ef;padding:18px max(18px,calc((100vw - 1180px)/2));display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}h1{margin:0;font-size:1.35rem}header p{color:#64748b;margin:5px 0 0}.nav{display:flex;gap:8px;flex-wrap:wrap}.nav a,button{border:1px solid #cbd5e1;border-radius:9px;padding:9px 12px;text-decoration:none;color:#334155;background:white;font:inherit;font-size:.88rem;font-weight:650;cursor:pointer}.nav a.active{color:#1546a0;background:#eff6ff;border-color:#bfdbfe}main{max-width:1180px;margin:26px auto;padding:0 18px 50px}.intro{margin-bottom:18px}.intro p{color:#64748b;line-height:1.55}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.module{background:white;border:1px solid #dce4ef;border-radius:15px;padding:20px;text-decoration:none;color:inherit;display:block;min-height:180px}.module:hover{border-color:#93b4ff;box-shadow:0 8px 24px rgba(21,94,239,.08)}.icon{width:42px;height:42px;display:grid;place-items:center;background:#eff6ff;color:#155eef;border-radius:12px;font-size:1.2rem}.module h2{font-size:1.05rem;margin:16px 0 7px}.module p{color:#64748b;margin:0;line-height:1.5;font-size:.9rem}.notice{border-radius:10px;background:#fff7ed;color:#9a3412;padding:13px 15px;margin-top:18px;font-size:.88rem;line-height:1.5}@media(max-width:760px){.grid{grid-template-columns:1fr}.nav{width:100%}}
-</style><script defer src="/assets/admin-session.js"></script></head><body>
-<header><div><h1>CAEPI API · Administração</h1><p>Escolha um módulo para trabalhar sem misturar os painéis.</p></div><nav class="nav"><a class="active" href="/admin">Início</a><a href="/dashboard">Tarefas</a><a href="/certificates">Catálogo e campanhas</a><a href="/admin/consult">Consultar CA</a><a href="/admin/api-keys">Chaves de API</a><a href="/admin/sources">Bases oficiais</a><button data-admin-logout type="button">Sair</button></nav></header>
+</style><link rel="stylesheet" href="/assets/admin-ui.css"><script defer src="/assets/admin-session.js"></script><script defer src="/assets/admin-ui.js"></script></head><body>
+<header><div><h1>CAEPI API · Administração</h1><p>Escolha um módulo para trabalhar sem misturar os painéis.</p></div><nav class="admin-nav nav main-nav" aria-label="Navegação principal">
+<a href="/admin" data-nav="home">Início</a>
+<a href="/dashboard" data-nav="monitor">Monitor de tarefas</a>
+<a href="/certificates" data-nav="certificates">Catálogo e lotes</a>
+<a href="/admin/consult" data-nav="consult">Consultar CA</a>
+<a href="/admin/api-keys" data-nav="keys">Chaves de API</a>
+<a href="/admin/sources" data-nav="sources">Bases oficiais</a>
+<button type="button" data-admin-logout> Sair </button>
+</nav></header>
 <main><section class="intro"><h2>Áreas de trabalho</h2><p>Consultas feitas por sistemas integrados usam chaves de API com permissões específicas. Operações administrativas exigem esta sessão.</p></section>
 <section class="grid">
 <a class="module" href="/admin/consult"><span class="icon">⌕</span><h2>Consultar um CA</h2><p>Pesquise um número e veja os dados locais consolidados, a procedência das fontes e a disponibilidade do PDF, sem iniciar scraping.</p></a>

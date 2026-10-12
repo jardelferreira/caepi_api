@@ -1,0 +1,119 @@
+/* CAEPI Admin shared shell: consistent navigation, fluid width, responsive tables and feedback. */
+:root{--ui-bg:#f3f6fb;--ui-surface:#fff;--ui-border:#d8e2ef;--ui-border-strong:#bfcee0;--ui-text:#172033;--ui-muted:#64748b;--ui-primary:#155eef;--ui-primary-dark:#144dcc;--ui-focus:#93b4ff;--ui-radius:14px}
+html{scroll-behavior:smooth;scroll-padding-top:150px}
+body:not(.login-page){min-width:320px;background:var(--ui-bg);color:var(--ui-text)}
+body:not(.login-page) header{position:sticky;top:0;z-index:100;display:grid!important;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;align-items:center;gap:12px 20px;width:100%;padding:15px clamp(16px,2.2vw,34px)!important;background:rgba(255,255,255,.97);border-bottom:1px solid var(--ui-border);box-shadow:0 3px 12px rgba(15,35,70,.035);backdrop-filter:blur(10px)}
+body:not(.login-page) header>div:first-child{grid-column:1;grid-row:1;min-width:0}
+body:not(.login-page) header h1{font-size:clamp(1.15rem,1.5vw,1.42rem);line-height:1.25;letter-spacing:-.02em}
+body:not(.login-page) header p{margin:5px 0 0;color:var(--ui-muted);font-size:.9rem;line-height:1.45}
+body:not(.login-page) header .status{grid-column:2;grid-row:1;justify-self:end;align-self:center;min-width:0;text-align:right;color:var(--ui-muted);font-size:.82rem}
+body:not(.login-page) header nav.admin-nav{grid-column:1/-1;grid-row:2;display:flex;align-items:center;gap:7px;flex-wrap:wrap;width:100%;min-width:0;margin:0;padding:0;overflow:visible}
+body:not(.login-page) header nav.admin-nav a,body:not(.login-page) header nav.admin-nav button{display:inline-flex;justify-content:center;align-items:center;min-height:40px;padding:9px 13px;border:1px solid transparent;border-radius:10px;background:transparent;color:#334155;text-decoration:none;font:inherit;font-size:.88rem;font-weight:650;line-height:1.2;white-space:nowrap;cursor:pointer;transition:background-color .15s,border-color .15s,color .15s}
+body:not(.login-page) header nav.admin-nav a:hover,body:not(.login-page) header nav.admin-nav button:hover{background:#f1f5f9;border-color:#e2e8f0}
+body:not(.login-page) header nav.admin-nav a[aria-current="page"]{background:#eff6ff;border-color:#bfdbfe;color:#1546a0}
+body:not(.login-page) header nav.admin-nav button[data-admin-logout]{margin-left:auto;border-color:var(--ui-border);background:#fff}
+body:not(.login-page) main{width:100%!important;max-width:none!important;margin:0!important;padding:clamp(16px,2vw,32px)!important}
+body:not(.login-page) main>section,body:not(.login-page) main>.panel,body:not(.login-page) main>.batch-panel,body:not(.login-page) main>.source-panel{min-width:0}
+body:not(.login-page) .panel,body:not(.login-page) .source-panel,body:not(.login-page) .batch-panel{border-color:var(--ui-border);border-radius:var(--ui-radius);box-shadow:0 2px 10px rgba(15,35,70,.025)}
+body:not(.login-page) input,body:not(.login-page) select,body:not(.login-page) textarea{max-width:100%;min-width:0;min-height:40px;border-color:var(--ui-border-strong);border-radius:10px;background:#fff;color:var(--ui-text)}
+body:not(.login-page) input:focus-visible,body:not(.login-page) select:focus-visible,body:not(.login-page) textarea:focus-visible,body:not(.login-page) button:focus-visible,body:not(.login-page) a:focus-visible{outline:3px solid rgba(21,94,239,.24);outline-offset:2px}
+body:not(.login-page) button{min-height:40px;border-radius:10px;transition:background-color .15s,border-color .15s,opacity .15s;max-width:100%}
+body:not(.login-page) button:disabled{opacity:.56;cursor:not-allowed;filter:none}
+body:not(.login-page) .primary{background:var(--ui-primary);border-color:var(--ui-primary);color:#fff}
+body:not(.login-page) .primary:hover:not(:disabled){background:var(--ui-primary-dark)}
+body:not(.login-page) .table-wrap,body:not(.login-page) .batch-table-wrap{width:100%;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;border-radius:8px}
+body:not(.login-page) table{max-width:100%;font-variant-numeric:tabular-nums}
+body:not(.login-page) th{position:sticky;top:0;z-index:1}
+body:not(.login-page) td{vertical-align:top;overflow-wrap:anywhere}
+body:not(.login-page) .source-grid{grid-template-columns:repeat(2,minmax(0,1fr));width:100%}
+body:not(.login-page) .form-grid{grid-template-columns:minmax(0,2fr) minmax(180px,1fr) auto}
+body:not(.login-page) .fields{grid-template-columns:repeat(4,minmax(0,1fr))}
+body:not(.login-page) .grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+body:not(.login-page) .module{height:100%;min-width:0}
+/* Ação principal do catálogo: colocada antes da tabela, não depois dos resultados. */
+body:not(.login-page) .batch-action-bar{display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap;margin:14px 0 10px;padding:16px 18px;border:1px solid #bcd1fa;border-radius:13px;background:linear-gradient(120deg,#f5f9ff 0%,#fff 72%);box-shadow:0 4px 16px rgba(21,94,239,.06)}
+body:not(.login-page) .batch-action-copy{display:flex;flex-direction:column;gap:4px;min-width:200px;flex:1}
+body:not(.login-page) .batch-action-copy strong{font-size:1rem;color:#153b80}
+body:not(.login-page) .batch-action-copy span{color:var(--ui-muted);font-size:.84rem;line-height:1.4}
+body:not(.login-page) .batch-action-copy .batch-action-selection{font-weight:750;color:var(--ui-primary)}
+body:not(.login-page) .batch-action-controls{display:flex;align-items:end;gap:9px;flex-wrap:wrap}
+body:not(.login-page) .batch-action-controls label{display:flex;flex-direction:column;gap:5px;color:#475569;font-size:.8rem;font-weight:650}
+body:not(.login-page) .batch-action-controls select{min-width:220px}
+body:not(.login-page) #batch-submit{min-height:44px;padding:11px 18px;font-weight:750;box-shadow:0 3px 8px rgba(21,94,239,.16)}
+body:not(.login-page) #batch-submit:disabled{box-shadow:none}
+body:not(.login-page) #batch-submit-message{margin-bottom:12px}
+body:not(.login-page) .batch-controls{display:flex;align-items:center;gap:9px;flex-wrap:wrap;width:100%;margin-bottom:10px}
+body:not(.login-page) .batch-controls input.batch-search-input{min-width:min(300px,100%);flex:2 1 300px}
+body:not(.login-page) .batch-controls .batch-filter{min-width:160px;flex:1 1 175px}
+body:not(.login-page) .batch-controls .filter-actions{display:flex;gap:8px;flex-wrap:wrap}
+body:not(.login-page) .batch-toolbar{width:100%}
+/* async button feedback */
+body:not(.login-page) button.is-loading{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:wait;opacity:.84;pointer-events:none}
+.button-spinner{display:inline-block;width:15px;height:15px;flex:0 0 15px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:caepi-spin .7s linear infinite}
+#caepi-page-progress{height:3px;position:fixed;top:0;left:0;right:0;z-index:101;background:transparent;opacity:0;pointer-events:none;transition:opacity .15s}
+#caepi-page-progress.is-active{opacity:1;background:linear-gradient(90deg,#155eef 0%,#7cb5ff 45%,#155eef 80%);background-size:200% 100%;animation:caepi-progress 1.2s linear infinite}
+#caepi-page-status{position:fixed;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;clip-path:inset(50%)}
+@keyframes caepi-spin{to{transform:rotate(360deg)}}
+@keyframes caepi-progress{to{background-position:-200% 0}}
+@media(max-width:1000px){body:not(.login-page) .integrity-cards{grid-template-columns:repeat(2,minmax(0,1fr))}body:not(.login-page) .campaign-summary-grid{grid-template-columns:repeat(3,minmax(0,1fr))}body:not(.login-page) .fields{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:760px){
+ body:not(.login-page) header{grid-template-columns:minmax(0,1fr);gap:10px;padding:13px 16px!important}
+ body:not(.login-page) header>div:first-child{grid-column:1;grid-row:1}
+ body:not(.login-page) header .status{grid-column:1;grid-row:2;justify-self:start;text-align:left}
+ body:not(.login-page) header nav.admin-nav{grid-column:1;grid-row:3;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+ body:not(.login-page) header nav.admin-nav a,body:not(.login-page) header nav.admin-nav button{width:100%;white-space:normal;text-align:center;padding:8px 6px;font-size:.82rem}
+ body:not(.login-page) header nav.admin-nav button[data-admin-logout]{margin-left:0}
+ body:not(.login-page) main{padding:16px!important}
+ body:not(.login-page) .source-grid{grid-template-columns:minmax(0,1fr)}
+ body:not(.login-page) .form-grid{grid-template-columns:minmax(0,1fr)}
+ body:not(.login-page) .fields{grid-template-columns:repeat(2,minmax(0,1fr))}
+ body:not(.login-page) .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+ body:not(.login-page) .batch-action-bar{align-items:stretch;padding:13px}
+ body:not(.login-page) .batch-action-controls{width:100%;align-items:stretch}
+ body:not(.login-page) .batch-action-controls label{flex:1 1 100%}
+ body:not(.login-page) .batch-action-controls select,body:not(.login-page) .batch-action-controls button,body:not(.login-page) #batch-submit{width:100%}
+ body:not(.login-page) .campaign-controls{align-items:stretch}
+ body:not(.login-page) .campaign-field{min-width:100%}
+}
+@media(max-width:480px){
+ body:not(.login-page) header nav.admin-nav{grid-template-columns:repeat(2,minmax(0,1fr))}
+ body:not(.login-page) .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+ body:not(.login-page) .integrity-cards,body:not(.login-page) .campaign-summary-grid{grid-template-columns:minmax(0,1fr)}
+ body:not(.login-page) .fields,body:not(.login-page) .grid{grid-template-columns:minmax(0,1fr)}
+ body:not(.login-page) .footer,body:not(.login-page) .batch-toolbar{align-items:flex-start}
+ body:not(.login-page) .actions,body:not(.login-page) .batch-pager{width:100%}
+ body:not(.login-page) .actions button,body:not(.login-page) .batch-pager button{flex:1}
+}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+
+
+/* Catálogo de CAs: impedir quebra dentro do número e da data de validade.
+   Seleciona apenas a tabela que contém o tbody do catálogo, sem afetar outras tabelas.
+   A largura extra gera rolagem horizontal em telas menores em vez de partir valores curtos. */
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows){
+  width:100%;
+  min-width:1380px;
+  table-layout:auto;
+}
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) th:nth-child(1),
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) td:nth-child(1){width:42px;min-width:42px}
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) th:nth-child(2),
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) td:nth-child(2){
+  width:84px;min-width:84px;white-space:nowrap;overflow-wrap:normal;word-break:keep-all;
+}
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) th:nth-child(3),
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) td:nth-child(3){width:120px;min-width:120px}
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) th:nth-child(4),
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) td:nth-child(4){
+  width:130px;min-width:130px;white-space:nowrap;overflow-wrap:normal;word-break:keep-all;
+}
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) th:nth-child(5),
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) td:nth-child(5){min-width:220px}
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) th:nth-child(6),
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) td:nth-child(6){min-width:250px}
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) th:nth-child(7),
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) td:nth-child(7){min-width:135px}
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) th:nth-child(8),
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) td:nth-child(8){min-width:170px}
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) th:nth-child(9),
+body:not(.login-page) table.batch-table:has(tbody#batch-catalog-rows) td:nth-child(9){min-width:230px}
