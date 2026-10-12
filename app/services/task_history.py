@@ -1,4 +1,3 @@
-\
 """Histórico operacional de tarefas armazenado no Redis da aplicação (sem migration SQL)."""
 import json
 import logging
@@ -53,22 +52,30 @@ def _save(record: dict[str, Any]) -> None:
     pipe.execute()
 
 
-def register_queued(task_id: str, task_name: str, ca_number: str | None) -> None:
+def register_queued(
+    task_id: str,
+    task_name: str,
+    ca_number: str | None,
+    *,
+    batch_id: str | None = None,
+) -> None:
+    """Registra a tarefa e, se aplicável, seu lote para recuperar o painel após reload."""
     try:
         key = _key(task_id)
         existing = _client.hgetall(key)
-        if existing:
-            # Keep a state already written by a fast worker.
-            existing_state = existing.get("state", "PENDING")
-            _save({
-                "task_id": task_id, "task_name": task_name, "ca_number": ca_number,
-                "state": existing_state, "created_at": existing.get("created_at", _now()),
-            })
-        else:
-            _save({
-                "task_id": task_id, "task_name": task_name, "ca_number": ca_number,
-                "state": "PENDING", "created_at": _now(),
-            })
+        record = {
+            "task_id": task_id,
+            "task_name": task_name,
+            "ca_number": ca_number,
+            "state": existing.get("state", "PENDING") if existing else "PENDING",
+            "created_at": existing.get("created_at", _now()) if existing else _now(),
+        }
+        effective_batch_id = batch_id or existing.get("batch_id")
+        if effective_batch_id:
+            record["batch_id"] = effective_batch_id
+        # Keep a state already written by a fast worker and attach the batch id even
+        # when the worker wrote the result before this registration completes.
+        _save(record)
     except redis.RedisError:
         logger.exception("task_history_write_failed", extra={"task_id": task_id, "operation": "register_queued"})
 
@@ -136,17 +143,37 @@ def update_task(
             record["error_type"] = error_type[:120]
         elif current.get("error_type"):
             record["error_type"] = current["error_type"]
-        if error_message:
+        if error_type == "PortalAccessBlockedError":
+            record["error_message"] = (
+                "Portal respondeu com desafio Cloudflare; a campanha foi pausada para evitar "
+                "novas tentativas automáticas. Use uma fonte oficial alternativa ou aguarde "
+                "a liberação de acesso."
+            )
+        elif error_message:
             record["error_message"] = error_message[:500]
         elif current.get("error_message"):
             record["error_message"] = current["error_message"]
+        batch_id = current.get("batch_id")
         _save(record)
+        if batch_id:
+            # Um bloqueio do portal pausa a campanha para não continuar enviando CAs
+            # enquanto a origem está protegida. Não tenta contornar o challenge.
+            try:
+                if state.upper() == "FAILURE" and error_type == "PortalAccessBlockedError":
+                    from app.services.campaigns import pause_campaign
+                    pause_campaign(batch_id)
+                # Campanhas têm contadores próprios; lotes manuais sem hash de campanha são ignorados.
+                from app.services.campaigns import record_task_terminal
+                record_task_terminal(batch_id, task_id, state)
+            except Exception:
+                # Falha de telemetria nunca pode transformar um scraping bem-sucedido em falha.
+                logger.exception("campaign_task_history_update_failed", extra={"task_id": task_id})
     except redis.RedisError:
         # Observability must not turn a successful scrape into a failed task.
         logger.exception("task_history_write_failed", extra={"task_id": task_id, "operation": "update_task"})
 
 
-\
+
 def list_tasks(*, state: str | None = None, ca_number: str | None = None, limit: int = 50, offset: int = 0) -> dict:
     matching = []
     for task_id in _client.zrevrange(HISTORY_KEY, 0, -1):

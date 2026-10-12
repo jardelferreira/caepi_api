@@ -1,13 +1,13 @@
 from types import SimpleNamespace
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app.api.v1 import certificates as certificates_api
 from app.main import app
+from conftest import make_admin_client
 
 
-client = TestClient(app)
+client = make_admin_client(app)
 
 
 def test_refresh_endpoint_normalizes_ca_and_queues_task(monkeypatch):

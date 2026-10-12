@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/2"
+    import_api_key: str | None = None  # Compatibilidade para ferramentas locais legadas.
+
+    admin_username: str | None = None
+    admin_password: str | None = None
+    admin_session_secret: str | None = None
+    admin_cookie_secure: bool = False
 
     storage_backend: Literal["seaweedfs", "r2"] = "seaweedfs"
     s3_endpoint_url: str = "http://localhost:8333"

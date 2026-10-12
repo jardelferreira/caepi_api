@@ -1,83 +1,32 @@
-# CAEPI API
+# CAEPI API — Importação manual das bases oficiais
 
-API para consulta e enriquecimento de Certificados de Aprovação (CA) de EPIs.
+O CAEPI API permite comparar e importar manualmente as bases de certificados publicadas pelo Ministério do Trabalho e Emprego (MTE), além de complementar os cadastros com o scraping do portal CAEPI.
 
-## Stack
-- Python 3.12, FastAPI e SQLAlchemy 2
-- PostgreSQL para dados consolidados e observações históricas
-- Redis + Celery para executar consultas em segundo plano
-- Selenium + Chromium/ChromeDriver para consultar o portal CAEPI
-- SeaweedFS local e Cloudflare R2 em produção, via API compatível com S3
-- Nginx como proxy reverso
+## Fontes oferecidas na dashboard
 
-## Executar
-```bash
-cp .env.example .env
-docker compose up --build -d
-docker compose ps
-```
+- **TXT via FTP oficial:** `ftp.mtps.gov.br/portal/fiscalizacao/seguranca-e-saude-no-trabalho/caepi/tgg_export_caepi.zip`, contendo o TXT delimitado por `|`. A estrutura segue a abordagem usada no repositório de referência [API_BaseCAEPI](https://github.com/JoaoAugustoMV/API_BaseCAEPI).
+- **CSV da página do MTE:** o sistema procura o link CSV dentro da página oficial em vez de fixar permanentemente um caminho de download.
+- **Arquivo local:** o operador também pode enviar um `.csv` ou `.txt` já baixado.
 
-API: http://localhost:8080  
-Swagger: http://localhost:8080/docs  
-Liveness: http://localhost:8080/api/v1/health/live  
-Readiness: http://localhost:8080/api/v1/health/ready
+A listagem de fontes não baixa nem importa arquivos. A inspeção só ocorre quando o operador clica no botão correspondente. A inspeção calcula a data disponível, o tamanho, o hash, o número de linhas, os CAs únicos e as linhas inválidas. O painel sinaliza a fonte com data identificada mais recente, sem assumir que um campo de modificação de servidor represente necessariamente a data de referência do conteúdo.
 
-## Consultar um CA
-A API enfileira o trabalho no Celery. Exemplo:
-```bash
-curl -X POST http://localhost:8080/api/v1/certificates/42049/refresh
-curl -X POST http://localhost:8080/api/v1/certificates/42049/pdf
-```
-Cada resposta inclui `task_id`. Consulte o estado com:
-```bash
-curl http://localhost:8080/api/v1/certificates/tasks/ID_DA_TAREFA
-```
+## Fluxo de importação
 
-O worker executa o Chromium headless via Selenium. Os PDFs são validados pela assinatura `%PDF-`, armazenados no SeaweedFS/R2 e registrados em `certificate_documents`. Os dados consolidados são mesclados por campo: valores vazios de uma consulta não apagam valores já conhecidos. Alterações coletadas são registradas em `certificate_observations`.
+A dashboard aplica o fluxo `inspecionar → comparar → selecionar → simular → confirmar`. O modo de simulação é obrigatório antes de uma gravação. Os arquivos ficam preparados em área temporária por 30 minutos e não são importados automaticamente.
 
-## Logs e operação
-```bash
-docker compose logs -f api
-docker compose logs -f worker
-docker compose logs -f scheduler
-docker compose exec api pytest
-docker compose down
-```
-`docker compose down` preserva volumes. `docker compose down -v` também remove os volumes de dados.
+O importador usa o número do CA como chave, aceita ocorrências históricas repetidas no TXT, consolida a última ocorrência no registro principal e registra mudanças usando a tabela de observações existente. A origem de cada campo é preservada em metadados JSON. Os dados do portal CAEPI têm prioridade sobre a base importada nos campos em que o portal fornece valor; campos vazios nunca apagam dados existentes.
 
-## Configuração opcional do Selenium
-- `CAEPI_URL`: substitui a URL principal do portal.
-- `IGNORE_HTTPS_ERRORS=1`: ignora erros de certificado TLS, somente para diagnóstico.
-- `CHROMIUM_BIN`: caminho do Chromium (padrão no container: `/usr/bin/chromium`).
-- `CHROMEDRIVER_BIN`: caminho do ChromeDriver (padrão no container: `/usr/bin/chromedriver`).
+## Instalação
 
-Não contorne autenticação, CAPTCHA ou outras proteções do portal; respeite os termos e limites de acesso. Se o portal mudar de estrutura ou bloquear a sessão automatizada, consulte os logs do worker para identificar a etapa que falhou.
+Siga `PATCH-INSTALL.md`. Configure `IMPORT_API_KEY` no `.env` existente e reinicie/build apenas `api`, `worker`, `scheduler` e depois o Nginx. Não apague volumes nem substitua o `.env`.
 
+## Endpoints administrativos
 
-## Testes automatizados
+- `GET /api/v1/imports/sources`: lista as fontes conhecidas; não baixa nada.
+- `POST /api/v1/imports/inspect-source?source_id=mte_ftp_txt`: inspeciona TXT do FTP, sem importar.
+- `POST /api/v1/imports/inspect-source?source_id=mte_web_csv`: encontra e inspeciona o CSV do MTE, sem importar.
+- `POST /api/v1/imports/inspect-upload`: inspeciona um upload local, sem importar.
+- `POST /api/v1/imports/import-staged?staging_token=…&dry_run=true`: simula.
+- `POST /api/v1/imports/import-staged?staging_token=…&dry_run=false`: grava após uma simulação recente da mesma fonte e confirmação explícita no painel.
 
-Instale as dependências de desenvolvimento no ambiente Python:
-
-```bash
-pip install -e ".[dev,scraping]"
-pytest -q
-```
-
-Os testes de idempotência usam banco SQLite temporário e armazenamento simulado. Eles não acessam o portal CAEPI nem alteram os dados do Docker. Cobrem a coleta repetida, o primeiro download, a deduplicação por SHA-256, a deduplicação por texto extraído e a criação de uma nova versão quando o conteúdo textual muda.
-
-Para executar os testes dentro do contêiner da API, com as dependências de teste instaladas na imagem:
-
-```bash
-docker compose exec -T api pytest -q
-```
-
-
-## Testes de integração reais (PostgreSQL + SeaweedFS)
-
-A suíte padrão usa dependências simuladas e não altera dados do ambiente. Para validar também o PostgreSQL e o SeaweedFS reais do Docker Compose, execute explicitamente o teste de integração abaixo. Ele substitui apenas o portal externo CAEPI por um scraper sintético e cria um CA de teste com número exclusivo. Ao final, remove somente o certificado de teste, seus registros relacionados e os objetos que criou.
-
-```bash
-docker compose exec -T -e CAEPI_RUN_INTEGRATION=1 api pytest -q -m integration tests/test_integration_postgres_seaweedfs.py
-```
-
-O teste valida a persistência no PostgreSQL, a leitura do PDF do SeaweedFS, a correspondência do SHA-256 e a deduplicação por hash na segunda execução. Não use `docker compose down -v` para executar os testes.
+Os endpoints administrativos exigem `X-Import-Key`, preenchido pela dashboard a partir da chave `IMPORT_API_KEY`. Não exponha esse valor no GitHub.

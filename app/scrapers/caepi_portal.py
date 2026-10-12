@@ -7,6 +7,8 @@ import re
 import shutil
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +20,8 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
+
+from app.scrapers.errors import PortalAccessBlockedError
 
 PORTAL_URL = os.getenv(
     "CAEPI_URL",
@@ -56,6 +60,43 @@ BLOCKING_SIGNS = (
 )
 
 
+def _cloudflare_challenge_body(title: str = "", source: str = "", body: str = "") -> bool:
+    """Reconhece páginas de challenge sem tentar resolvê-las ou contorná-las."""
+    combined = f"{title}\n{source}\n{body}".lower()
+    return any(sign in combined for sign in (
+        "just a moment", "cf-mitigated", "challenges.cloudflare.com",
+        "challenge-platform", "cf-chl-",
+    ))
+
+
+def _probe_cloudflare_challenge(url: str, timeout: int = 8) -> bool:
+    """Em caso de página Selenium vazia, verifica se o servidor devolve challenge CF.
+
+    Esta função apenas identifica a resposta de proteção; não a contorna.
+    """
+    user_agent = os.getenv(
+        "USER_AGENT",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/130.0.0.0 Safari/537.36",
+    )
+    request = urllib.request.Request(url, headers={"User-Agent": user_agent, "Accept": "text/html"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            header = response.headers.get("Cf-Mitigated", "")
+            body = response.read(8192).decode("utf-8", errors="replace")
+            return header.lower() == "challenge" or _cloudflare_challenge_body(source=body)
+    except urllib.error.HTTPError as exc:
+        header = exc.headers.get("Cf-Mitigated", "") if exc.headers else ""
+        try:
+            body = exc.read(8192).decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        return header.lower() == "challenge" or _cloudflare_challenge_body(source=body)
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
+
 @dataclass(slots=True)
 class ScrapedPdf:
     content: bytes
@@ -87,6 +128,38 @@ class CaepiPortalScraper:
     @staticmethod
     def _selector(suffix: str, tag: str = "") -> str:
         return f'{tag}[id$="{suffix}"]' if tag else f'[id$="{suffix}"]'
+
+    @staticmethod
+    def _save_form_diagnostic(driver: webdriver.Chrome) -> Path:
+        debug_dir = Path(os.getenv("CAEPI_DEBUG_DIR", "/app/debug/caepi"))
+        try:
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            try:
+                driver.save_screenshot(str(debug_dir / f"formulario-{stamp}.png"))
+            except WebDriverException:
+                pass
+            try:
+                (debug_dir / f"formulario-{stamp}.html").write_text(
+                    driver.page_source or "", encoding="utf-8"
+                )
+            except OSError:
+                pass
+            try:
+                body = " ".join(driver.find_element(By.TAG_NAME, "body").text.split())[:2000]
+            except WebDriverException:
+                body = ""
+            try:
+                (debug_dir / f"formulario-{stamp}.txt").write_text(
+                    f"URL: {getattr(driver, 'current_url', '')}\n"
+                    f"Título: {getattr(driver, 'title', '')}\nTexto: {body}",
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass
+        except OSError:
+            pass
+        return debug_dir
 
     def _create_driver(self, download_dir: Path) -> webdriver.Chrome:
         options = webdriver.ChromeOptions()
@@ -133,49 +206,52 @@ class CaepiPortalScraper:
     def _open_details(self, driver: webdriver.Chrome, ca_number: str):
         errors: list[str] = []
         wait = WebDriverWait(driver, self.timeout_s)
+        number_input = None
+        last_url = PORTAL_URL
         for url in dict.fromkeys((PORTAL_URL, LEGACY_PORTAL_URL)):
+            last_url = url
             try:
                 driver.get(url)
+                # Responde rápido a um challenge visível na página sem insistir em seletores.
+                title = getattr(driver, "title", "") or ""
+                source = getattr(driver, "page_source", "") or ""
+                try:
+                    body_text = " ".join(driver.find_element(By.TAG_NAME, "body").text.split())[:300]
+                except WebDriverException:
+                    body_text = ""
+                if _cloudflare_challenge_body(title, source, body_text):
+                    debug_dir = self._save_form_diagnostic(driver)
+                    raise PortalAccessBlockedError(
+                        "O portal CAEPI respondeu com um desafio do Cloudflare; "
+                        "a consulta automática foi interrompida sem tentar contorná-lo. "
+                        f"Diagnóstico salvo em {debug_dir}."
+                    )
                 number_input = wait.until(EC.element_to_be_clickable(
                     (By.CSS_SELECTOR, self._selector("txtNumeroCA", "input"))
                 ))
                 break
+            except PortalAccessBlockedError:
+                raise
             except (TimeoutException, WebDriverException) as exc:
                 excerpt = ""
+                title = ""
+                source = ""
                 try:
+                    title = getattr(driver, "title", "") or ""
+                    source = getattr(driver, "page_source", "") or ""
                     excerpt = " ".join(driver.find_element(By.TAG_NAME, "body").text.split())[:180]
                 except WebDriverException:
                     pass
+                if _cloudflare_challenge_body(title, source, excerpt) or _probe_cloudflare_challenge(url):
+                    debug_dir = self._save_form_diagnostic(driver)
+                    raise PortalAccessBlockedError(
+                        "O portal CAEPI respondeu com um desafio do Cloudflare (HTTP 403/Cf-Mitigated: challenge). "
+                        "Não serão feitas novas tentativas automáticas para esse bloqueio. "
+                        f"Diagnóstico salvo em {debug_dir}."
+                    ) from exc
                 errors.append(f"{url}: {type(exc).__name__}: {excerpt}")
-        else:
-            # Salva evidências da página recebida para diferenciar proteção do portal,
-            # mudança de seletores e falha de carregamento. Não registra cookies.
-            debug_dir = Path(os.getenv("CAEPI_DEBUG_DIR", "/app/debug/caepi"))
-            try:
-                debug_dir.mkdir(parents=True, exist_ok=True)
-                stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-                try:
-                    driver.save_screenshot(str(debug_dir / f"formulario-{stamp}.png"))
-                except WebDriverException:
-                    pass
-                try:
-                    (debug_dir / f"formulario-{stamp}.html").write_text(
-                        driver.page_source or "", encoding="utf-8"
-                    )
-                except OSError:
-                    pass
-                try:
-                    (debug_dir / f"formulario-{stamp}.txt").write_text(
-                        f"URL: {driver.current_url}\\n"
-                        f"Título: {driver.title}\\n"
-                        + "Texto: "
-                        + " ".join(driver.find_element(By.TAG_NAME, "body").text.split())[:2000],
-                        encoding="utf-8",
-                    )
-                except (WebDriverException, OSError):
-                    pass
-            except OSError:
-                pass
+        if number_input is None:
+            debug_dir = self._save_form_diagnostic(driver)
             raise RuntimeError(
                 "O formulário CAEPI não ficou disponível. "
                 + " | ".join(errors)

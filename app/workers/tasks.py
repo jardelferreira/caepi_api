@@ -13,7 +13,9 @@ from app.core.database import SessionLocal
 from app.models.ca import Certificate
 from app.models.document import CertificateDocument
 from app.models.observation import CertificateObservation
+from app.services.source_merge import effective_existing_source, has_value, should_replace
 from app.storage import get_object_store
+from app.scrapers.errors import PortalAccessBlockedError
 from app.workers.celery_app import celery_app
 
 
@@ -35,9 +37,10 @@ def _parse_date(value: Any) -> date | None:
 
 
 def _save_certificate(scraped) -> int:
-    """Mescla dados novos sem apagar valores existentes por campos vazios.
+    """Mescla os dados do portal sem apagar valores preenchidos por campos vazios.
 
-    Também registra observações por campo na tabela já existente, sem alterar o schema.
+    O portal tem precedência sobre a base oficial nos campos em que fornece valor.
+    A origem é registrada por campo no JSON existente, sem migração de schema.
     """
     fields = scraped.fields
     mapped_values = {
@@ -56,26 +59,63 @@ def _save_certificate(scraped) -> int:
             select(Certificate).where(Certificate.ca_number == scraped.ca_number)
         )
         if certificate is None:
-            certificate = Certificate(ca_number=scraped.ca_number)
+            certificate = Certificate(ca_number=scraped.ca_number, consolidated_data={})
             db.add(certificate)
             db.flush()
 
-        for attribute, new_value in mapped_values.items():
-            if new_value is None or (isinstance(new_value, str) and not new_value.strip()):
-                continue
-            old_value = getattr(certificate, attribute)
-            if old_value != new_value:
-                setattr(certificate, attribute, new_value)
-
         previous_data = dict(certificate.consolidated_data or {})
         merged_data = {**previous_data}
+        meta = merged_data.get("_meta")
+        if not isinstance(meta, dict):
+            meta = {}
+        else:
+            meta = dict(meta)
+        field_sources = meta.get("field_sources")
+        if not isinstance(field_sources, dict):
+            field_sources = {}
+        else:
+            field_sources = dict(field_sources)
+
+        for attribute, new_value in mapped_values.items():
+            if not has_value(new_value):
+                continue
+            old_value = getattr(certificate, attribute)
+            old_source = effective_existing_source(
+                field_sources.get(attribute), certificate.last_source
+            ) if has_value(old_value) else ""
+            if should_replace(old_value, old_source, new_value, "caepi_portal"):
+                if old_value != new_value:
+                    setattr(certificate, attribute, new_value)
+                # Mesmo quando os valores coincidem, a consulta do portal valida a origem.
+                field_sources[attribute] = "caepi_portal"
+
         changed_fields: list[tuple[str, Any]] = []
+        raw_field_sources = meta.get("raw_field_sources")
+        if not isinstance(raw_field_sources, dict):
+            raw_field_sources = {}
+        else:
+            raw_field_sources = dict(raw_field_sources)
         for key, value in fields.items():
             if value is None or value == "" or value == [] or value == {}:
                 continue
             if merged_data.get(key) != value:
                 changed_fields.append((key, value))
             merged_data[key] = value
+            raw_field_sources[key] = "caepi_portal"
+
+        meta["field_sources"] = field_sources
+        meta["raw_field_sources"] = raw_field_sources
+        source_meta = meta.get("sources")
+        if not isinstance(source_meta, dict):
+            source_meta = {}
+        else:
+            source_meta = dict(source_meta)
+        source_meta["caepi_portal"] = {
+            "collected_at": scraped.collected_at.isoformat(),
+            "source_url": getattr(scraped, "source_url", None),
+        }
+        meta["sources"] = source_meta
+        merged_data["_meta"] = meta
         certificate.consolidated_data = merged_data
         certificate.last_source = "caepi_portal"
         certificate.last_source_update = scraped.collected_at
@@ -102,7 +142,7 @@ def _save_certificate(scraped) -> int:
 @celery_app.task(
     name="app.workers.tasks.refresh_source",
     autoretry_for=(Exception,),
-    dont_autoretry_for=(ValueError,),
+    dont_autoretry_for=(ValueError, PortalAccessBlockedError),
     retry_backoff=True,
     retry_backoff_max=300,
     retry_jitter=True,
@@ -146,7 +186,7 @@ def _extract_pdf_text(content: bytes) -> str:
 @celery_app.task(
     name="app.workers.tasks.fetch_certificate_pdf",
     autoretry_for=(Exception,),
-    dont_autoretry_for=(ValueError,),
+    dont_autoretry_for=(ValueError, PortalAccessBlockedError),
     retry_backoff=True,
     retry_backoff_max=300,
     retry_jitter=True,
@@ -283,3 +323,4 @@ def fetch_certificate_pdf(ca_number: str) -> dict[str, Any]:
         "size_bytes": len(pdf.content),
         "deduplicated_by": None,
     }
+

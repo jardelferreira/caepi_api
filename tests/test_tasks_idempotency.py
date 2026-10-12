@@ -176,3 +176,47 @@ def test_changed_pdf_text_creates_new_version_and_preserves_previous(test_enviro
     assert len(document_rows(session_factory)) == 2
     assert old_result["document_key"] in store.objects
     assert new_result["document_key"] in store.objects
+
+
+def test_scrape_has_precedence_over_official_csv_without_erasing_raw_official_data(
+    test_environment,
+):
+    from io import BytesIO
+
+    from app.importers.official_base import import_official_base
+
+    session_factory, _, _ = test_environment
+    csv_content = (
+        "NRRegistroCA;DataValidade;Situacao;CNPJ;RazaoSocial;NomeEquipamento;DescricaoEquipamento\n"
+        "498;31/12/2028;Válido;12.345.678/0001-90;Fabricante CSV;Respirador CSV;Dados oficiais\n"
+    ).encode("utf-8")
+    import_official_base(
+        BytesIO(csv_content),
+        filename="base-teste.csv",
+        file_sha256="b" * 64,
+        dry_run=False,
+        session_factory=session_factory,
+    )
+
+    scraped = SimpleNamespace(
+        ca_number="498",
+        fields={
+            "situacao": "SUSPENSO NO PORTAL",
+            "razao_social": "Fabricante do Portal",
+            "equipamento": "Respirador do Portal",
+        },
+        collected_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        source_url="https://caepi.trabalho.gov.br/teste",
+    )
+    first_id = tasks._save_certificate(scraped)
+
+    with session_factory() as db:
+        certificate = db.get(Certificate, first_id)
+        assert certificate is not None
+        assert certificate.status == "SUSPENSO NO PORTAL"
+        assert certificate.manufacturer == "Fabricante do Portal"
+        assert certificate.equipment_name == "Respirador do Portal"
+        assert certificate.consolidated_data["official_base"]["RazaoSocial"] == "Fabricante CSV"
+        assert certificate.consolidated_data["_meta"]["field_sources"]["status"] == "caepi_portal"
+        official_source = certificate.consolidated_data["_meta"]["sources"]["mte_official_base"]
+        assert official_source["sha256"] == "b" * 64

@@ -6,6 +6,7 @@ from app.core.database import Base
 from app.models.ca import Certificate
 from app.models.observation import CertificateObservation
 from app.models.document import CertificateDocument
+from app.models.api_key import ApiKey
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
